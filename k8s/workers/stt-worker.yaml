@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stt-worker-deployment
+  namespace: multimodal-ai
+  labels:
+    app: stt-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stt-worker
+  template:
+    metadata:
+      labels:
+        app: stt-worker
+    spec:
+      containers:
+      - name: stt-worker
+        image: multimodal-stt-worker:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8003
+        envFrom:
+        - configMapRef:
+            name: app-config
+        env:
+        - name: HUGGINGFACE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-keys
+              key: huggingface-api-key
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stt-worker-service
+  namespace: multimodal-ai
+spec:
+  selector:
+    app: stt-worker
+  ports:
+  - protocol: TCP
+    port: 8003
+    targetPort: 8003
+  type: ClusterIP

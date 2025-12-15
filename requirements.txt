@@ -1,0 +1,12 @@
+# Root-level requirements for development
+# Individual services have their own requirements.txt files
+
+# Gateway
+-r gateway/requirements.txt
+
+# Workers (for local testing)
+-r workers/llm/requirements.txt
+-r workers/image/requirements.txt
+-r workers/stt/requirements.txt
+-r workers/tts/requirements.txt
+-r workers/cyclegan/requirements.txt

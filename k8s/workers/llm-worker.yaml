@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-worker-deployment
+  namespace: multimodal-ai
+  labels:
+    app: llm-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-worker
+  template:
+    metadata:
+      labels:
+        app: llm-worker
+    spec:
+      containers:
+      - name: llm-worker
+        image: multimodal-llm-worker:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8001
+        envFrom:
+        - configMapRef:
+            name: app-config
+        env:
+        - name: OPENROUTER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-keys
+              key: openrouter-api-key
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-worker-service
+  namespace: multimodal-ai
+spec:
+  selector:
+    app: llm-worker
+  ports:
+  - protocol: TCP
+    port: 8001
+    targetPort: 8001
+  type: ClusterIP

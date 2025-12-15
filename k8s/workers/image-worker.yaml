@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: image-worker-deployment
+  namespace: multimodal-ai
+  labels:
+    app: image-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: image-worker
+  template:
+    metadata:
+      labels:
+        app: image-worker
+    spec:
+      containers:
+      - name: image-worker
+        image: multimodal-image-worker:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8002
+        envFrom:
+        - configMapRef:
+            name: app-config
+        env:
+        - name: HUGGINGFACE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-keys
+              key: huggingface-api-key
+        volumeMounts:
+        - name: storage
+          mountPath: /data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: multimodal-storage-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: image-worker-service
+  namespace: multimodal-ai
+spec:
+  selector:
+    app: image-worker
+  ports:
+  - protocol: TCP
+    port: 8002
+    targetPort: 8002
+  type: ClusterIP

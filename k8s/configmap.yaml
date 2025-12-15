@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: multimodal-ai
+data:
+  # Gateway configuration
+  DB_PATH: "/data/jobs.db"
+  
+  # Worker service URLs (internal K8s service names)
+  LLM_WORKER_URL: "http://llm-worker-service:8001"
+  IMAGE_WORKER_URL: "http://image-worker-service:8002"
+  STT_WORKER_URL: "http://stt-worker-service:8003"
+  TTS_WORKER_URL: "http://tts-worker-service:8004"
+  CYCLEGAN_WORKER_URL: "http://cyclegan-worker-service:8005"
+  
+  # Storage paths
+  STORAGE_PATH: "/data"
+  
+  # Model URLs (Hugging Face)
+  IMAGE_MODEL_URL: "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
+  STT_MODEL_URL: "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
+  TTS_MODEL_URL: "https://api-inference.huggingface.co/models/espnet/kan-bayashi_ljspeech_vits"
+  CYCLEGAN_MODEL_URL: "https://api-inference.huggingface.co/models/CompVis/stable-diffusion-v1-4"
+  
+  # LLM model
+  LLM_MODEL: "openai/gpt-3.5-turbo"

@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tts-worker-deployment
+  namespace: multimodal-ai
+  labels:
+    app: tts-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tts-worker
+  template:
+    metadata:
+      labels:
+        app: tts-worker
+    spec:
+      containers:
+      - name: tts-worker
+        image: multimodal-tts-worker:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8004
+        envFrom:
+        - configMapRef:
+            name: app-config
+        env:
+        - name: HUGGINGFACE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-keys
+              key: huggingface-api-key
+        volumeMounts:
+        - name: storage
+          mountPath: /data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: multimodal-storage-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tts-worker-service
+  namespace: multimodal-ai
+spec:
+  selector:
+    app: tts-worker
+  ports:
+  - protocol: TCP
+    port: 8004
+    targetPort: 8004
+  type: ClusterIP
