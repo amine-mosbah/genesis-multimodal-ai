@@ -1,6 +1,49 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { getJob, Job } from '../api'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { cn } from '@/lib/utils'
+import { 
+  MessageSquare, 
+  Image, 
+  Mic, 
+  Volume2, 
+  Wand2, 
+  Palette,
+  AlertCircle,
+  Clock,
+  ArrowLeft,
+  Copy,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  FileText,
+  ImageIcon,
+  Music,
+  Cpu,
+  Timer
+} from 'lucide-react'
+
+const pipelineIcons: Record<string, React.ComponentType<{ className?: string }>> = {
+  text_to_text: MessageSquare,
+  text_to_image: Image,
+  text_to_speech: Volume2,
+  speech_to_text: Mic,
+  speech_to_image: Wand2,
+  image_to_image: Palette,
+}
+
+const pipelineGradients: Record<string, string> = {
+  text_to_text: "from-blue-500 to-cyan-500",
+  text_to_image: "from-purple-500 to-pink-500",
+  text_to_speech: "from-green-500 to-emerald-500",
+  speech_to_text: "from-orange-500 to-amber-500",
+  speech_to_image: "from-rose-500 to-red-500",
+  image_to_image: "from-indigo-500 to-violet-500",
+}
 
 export default function JobDetail() {
   const { jobId } = useParams<{ jobId: string }>()
@@ -8,6 +51,7 @@ export default function JobDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [polling, setPolling] = useState(true)
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     if (jobId) {
@@ -18,11 +62,10 @@ export default function JobDetail() {
   useEffect(() => {
     if (!polling || !jobId) return
 
-    // Poll for job updates if job is still processing
     if (job && (job.status === 'queued' || job.status === 'running')) {
       const interval = setInterval(() => {
         loadJob()
-      }, 2000) // Poll every 2 seconds
+      }, 2000)
 
       return () => clearInterval(interval)
     } else {
@@ -37,25 +80,18 @@ export default function JobDetail() {
       const jobData = await getJob(jobId)
       setJob(jobData)
       setError(null)
-    } catch (err: any) {
-      setError(err.message || 'Failed to load job')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to load job'
+      setError(message)
     } finally {
       setLoading(false)
     }
   }
 
-  const getStatusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      queued: 'bg-gray-100 text-gray-800',
-      running: 'bg-blue-100 text-blue-800',
-      completed: 'bg-green-100 text-green-800',
-      failed: 'bg-red-100 text-red-800',
-    }
-    return (
-      <span className={`px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full ${colors[status] || colors.queued}`}>
-        {status.toUpperCase()}
-      </span>
-    )
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
   }
 
   const formatDate = (dateString: string | null | undefined) => {
@@ -63,166 +99,327 @@ export default function JobDetail() {
     return new Date(dateString).toLocaleString()
   }
 
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'queued':
+        return <Clock className="h-5 w-5" />
+      case 'running':
+        return <Loader2 className="h-5 w-5 animate-spin" />
+      case 'completed':
+        return <CheckCircle2 className="h-5 w-5" />
+      case 'failed':
+        return <XCircle className="h-5 w-5" />
+      default:
+        return <Clock className="h-5 w-5" />
+    }
+  }
+
+  const getStatusVariant = (status: string) => {
+    const variants: Record<string, "queued" | "running" | "completed" | "failed"> = {
+      queued: 'queued',
+      running: 'running',
+      completed: 'completed',
+      failed: 'failed',
+    }
+    return variants[status] || 'queued'
+  }
+
+  const calculateDuration = () => {
+    if (!job?.metadata.started_at) return null
+    const start = new Date(job.metadata.started_at).getTime()
+    const end = job.metadata.completed_at 
+      ? new Date(job.metadata.completed_at).getTime() 
+      : Date.now()
+    const duration = (end - start) / 1000
+    if (duration < 60) return `${duration.toFixed(1)}s`
+    return `${(duration / 60).toFixed(1)}m`
+  }
+
   if (loading) {
     return (
-      <div className="px-4 py-6 sm:px-0">
-        <div className="text-center">Loading job...</div>
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+        <Spinner size="lg" />
+        <p className="text-muted-foreground">Loading job details...</p>
       </div>
     )
   }
 
   if (error || !job) {
     return (
-      <div className="px-4 py-6 sm:px-0">
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-          {error || 'Job not found'}
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+        <div className="flex items-center gap-3 bg-destructive/10 border border-destructive/30 text-red-400 px-6 py-4 rounded-lg">
+          <AlertCircle className="h-5 w-5" />
+          <p>{error || 'Job not found'}</p>
         </div>
-        <Link to="/" className="mt-4 text-indigo-600 hover:text-indigo-500">
-          ← Back to Create Job
-        </Link>
+        <Button variant="outline" asChild>
+          <Link to="/">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Create
+          </Link>
+        </Button>
       </div>
     )
   }
 
+  const Icon = pipelineIcons[job.pipeline] || Wand2
+  const gradient = pipelineGradients[job.pipeline] || "from-gray-500 to-gray-600"
+  const duration = calculateDuration()
+
   return (
-    <div className="px-4 py-6 sm:px-0">
-      <Link to="/" className="text-indigo-600 hover:text-indigo-500 mb-4 inline-block">
-        ← Back to Create Job
-      </Link>
+    <div className="space-y-6 animate-fade-in">
+      {/* Back Button */}
+      <Button variant="ghost" asChild className="mb-4">
+        <Link to="/history">
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Back to History
+        </Link>
+      </Button>
 
-      <div className="bg-white shadow rounded-lg p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Job Details</h2>
-          {getStatusBadge(job.status)}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Job Information</h3>
-            <dl className="space-y-2">
-              <div>
-                <dt className="text-sm font-medium text-gray-500">Job ID</dt>
-                <dd className="text-sm text-gray-900 font-mono">{job.job_id}</dd>
+      {/* Header Card */}
+      <Card className="glass-card overflow-hidden">
+        <div className={cn("h-2 bg-gradient-to-r", gradient)} />
+        <CardContent className="p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className={cn(
+                "w-16 h-16 rounded-xl flex items-center justify-center bg-gradient-to-br",
+                gradient
+              )}>
+                <Icon className="h-8 w-8 text-white" />
               </div>
               <div>
-                <dt className="text-sm font-medium text-gray-500">Pipeline</dt>
-                <dd className="text-sm text-gray-900">{job.pipeline}</dd>
+                <h1 className="text-2xl font-bold text-foreground capitalize mb-1">
+                  {job.pipeline.replace(/_/g, ' → ')}
+                </h1>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <span className="font-mono text-xs">{job.job_id.slice(0, 8)}...</span>
+                  <button 
+                    onClick={() => copyToClipboard(job.job_id)}
+                    className="hover:text-foreground transition-colors"
+                  >
+                    {copied ? <CheckCircle2 className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
               </div>
+            </div>
+            <Badge variant={getStatusVariant(job.status)} className="flex items-center gap-1.5 px-3 py-1.5">
+              {getStatusIcon(job.status)}
+              {job.status.toUpperCase()}
+            </Badge>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Processing Animation */}
+      {(job.status === 'queued' || job.status === 'running') && (
+        <Card className="glass-card border-primary/30">
+          <CardContent className="py-8">
+            <div className="flex flex-col items-center gap-4">
+              <div className="relative">
+                <div className="absolute inset-0 bg-primary/20 rounded-full blur-xl animate-pulse" />
+                <div className="relative w-16 h-16 rounded-full bg-primary/20 flex items-center justify-center">
+                  <Loader2 className="h-8 w-8 text-primary animate-spin" />
+                </div>
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-medium text-foreground">
+                  {job.status === 'queued' ? 'Waiting in queue...' : 'Processing your request...'}
+                </p>
+                <p className="text-sm text-muted-foreground">This page will auto-update</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Error Message */}
+      {job.status === 'failed' && job.metadata.error_message && (
+        <Card className="glass-card border-destructive/30">
+          <CardHeader>
+            <CardTitle className="text-red-400 flex items-center gap-2">
+              <XCircle className="h-5 w-5" />
+              Error Details
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="bg-destructive/10 rounded-lg p-4 text-sm text-red-400 font-mono">
+              {job.metadata.error_message}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Job Info */}
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Cpu className="h-5 w-5 text-primary" />
+              Job Information
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <dt className="text-sm font-medium text-gray-500">Created At</dt>
-                <dd className="text-sm text-gray-900">{formatDate(job.metadata.created_at)}</dd>
+                <p className="text-sm text-muted-foreground">Created</p>
+                <p className="font-medium text-foreground">{formatDate(job.metadata.created_at)}</p>
               </div>
               {job.metadata.started_at && (
                 <div>
-                  <dt className="text-sm font-medium text-gray-500">Started At</dt>
-                  <dd className="text-sm text-gray-900">{formatDate(job.metadata.started_at)}</dd>
+                  <p className="text-sm text-muted-foreground">Started</p>
+                  <p className="font-medium text-foreground">{formatDate(job.metadata.started_at)}</p>
                 </div>
               )}
               {job.metadata.completed_at && (
                 <div>
-                  <dt className="text-sm font-medium text-gray-500">Completed At</dt>
-                  <dd className="text-sm text-gray-900">{formatDate(job.metadata.completed_at)}</dd>
+                  <p className="text-sm text-muted-foreground">Completed</p>
+                  <p className="font-medium text-foreground">{formatDate(job.metadata.completed_at)}</p>
                 </div>
               )}
-              {job.metadata.worker_used && (
+              {duration && (
                 <div>
-                  <dt className="text-sm font-medium text-gray-500">Worker(s)</dt>
-                  <dd className="text-sm text-gray-900">{job.metadata.worker_used}</dd>
+                  <p className="text-sm text-muted-foreground flex items-center gap-1">
+                    <Timer className="h-3.5 w-3.5" /> Duration
+                  </p>
+                  <p className="font-medium text-foreground">{duration}</p>
                 </div>
               )}
-            </dl>
-          </div>
-
-          {job.status === 'failed' && job.metadata.error_message && (
-            <div>
-              <h3 className="text-lg font-medium text-red-900 mb-2">Error</h3>
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-                {job.metadata.error_message}
+            </div>
+            {job.metadata.worker_used && (
+              <div className="pt-4 border-t border-border">
+                <p className="text-sm text-muted-foreground mb-1">Workers Used</p>
+                <div className="flex flex-wrap gap-2">
+                  {job.metadata.worker_used.split(',').map((worker) => (
+                    <Badge key={worker} variant="secondary" className="font-mono text-xs">
+                      {worker.trim()}
+                    </Badge>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </CardContent>
+        </Card>
 
-        {job.inputs && (
-          <div className="mt-6">
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Inputs</h3>
-            <div className="bg-gray-50 rounded p-4">
-              {job.inputs.text && (
-                <div className="mb-2">
-                  <span className="text-sm font-medium text-gray-500">Text: </span>
-                  <span className="text-sm text-gray-900">{job.inputs.text}</span>
-                </div>
-              )}
-              {job.inputs.image_url && (
-                <div className="mb-2">
-                  <span className="text-sm font-medium text-gray-500">Image URL: </span>
-                  <span className="text-sm text-gray-900 break-all">{job.inputs.image_url}</span>
-                </div>
-              )}
-              {job.inputs.audio_url && (
-                <div>
-                  <span className="text-sm font-medium text-gray-500">Audio URL: </span>
-                  <span className="text-sm text-gray-900 break-all">{job.inputs.audio_url}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        {/* Input */}
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <FileText className="h-5 w-5 text-primary" />
+              Input
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {job.inputs.text && (
+              <div className="bg-secondary/50 rounded-lg p-4">
+                <p className="text-foreground whitespace-pre-wrap">{job.inputs.text}</p>
+              </div>
+            )}
+            {job.inputs.audio_url && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground break-all">{job.inputs.audio_url}</p>
+                <audio controls className="w-full">
+                  <source src={job.inputs.audio_url} />
+                </audio>
+              </div>
+            )}
+            {job.inputs.image_url && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground break-all">{job.inputs.image_url}</p>
+                <img src={job.inputs.image_url} alt="Input" className="rounded-lg max-h-64 object-contain" />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
-        {job.status === 'completed' && job.outputs && (
-          <div className="mt-6">
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Outputs</h3>
-            <div className="space-y-4">
-              {job.outputs.text && (
-                <div>
-                  <span className="text-sm font-medium text-gray-500 block mb-1">Generated Text:</span>
-                  <div className="bg-gray-50 rounded p-4">
-                    <p className="text-sm text-gray-900 whitespace-pre-wrap">{job.outputs.text}</p>
-                  </div>
+      {/* Outputs */}
+      {job.status === 'completed' && (
+        <Card className="glass-card border-success/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg text-green-400">
+              <CheckCircle2 className="h-5 w-5" />
+              Output
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {job.outputs.text && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    Generated Text
+                  </p>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => copyToClipboard(job.outputs.text || '')}
+                  >
+                    {copied ? <CheckCircle2 className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
+                  </Button>
                 </div>
-              )}
-              {job.outputs.image_url && (
-                <div>
-                  <span className="text-sm font-medium text-gray-500 block mb-1">Generated Image:</span>
-                  <div className="bg-gray-50 rounded p-4">
-                    <img
-                      src={job.outputs.image_url}
-                      alt="Generated"
-                      className="max-w-full h-auto rounded"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement
-                        target.style.display = 'none'
-                        const parent = target.parentElement
-                        if (parent) {
-                          parent.innerHTML = `<p class="text-sm text-red-600">Failed to load image. URL: ${job.outputs.image_url}</p>`
-                        }
-                      }}
-                    />
-                  </div>
+                <div className="bg-secondary/50 rounded-lg p-4">
+                  <p className="text-foreground whitespace-pre-wrap leading-relaxed">{job.outputs.text}</p>
                 </div>
-              )}
-              {job.outputs.audio_url && (
-                <div>
-                  <span className="text-sm font-medium text-gray-500 block mb-1">Generated Audio:</span>
-                  <div className="bg-gray-50 rounded p-4">
-                    <audio controls className="w-full">
-                      <source src={job.outputs.audio_url} type="audio/wav" />
-                      <source src={job.outputs.audio_url} type="audio/mpeg" />
-                      Your browser does not support the audio element.
-                    </audio>
-                    <p className="text-xs text-gray-500 mt-2">URL: {job.outputs.audio_url}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+              </div>
+            )}
 
-        {job.status === 'queued' || job.status === 'running' ? (
-          <div className="mt-6 text-center text-sm text-gray-500">
-            Job is processing... This page will auto-refresh.
-          </div>
-        ) : null}
+            {job.outputs.image_url && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                  <ImageIcon className="h-4 w-4" />
+                  Generated Image
+                </p>
+                <div className="bg-secondary/50 rounded-lg p-4">
+                  <img
+                    src={job.outputs.image_url}
+                    alt="Generated"
+                    className="rounded-lg max-w-full h-auto mx-auto"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement
+                      target.onerror = null
+                      target.src = ''
+                      target.alt = 'Failed to load image'
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground mt-2 break-all">{job.outputs.image_url}</p>
+                </div>
+              </div>
+            )}
+
+            {job.outputs.audio_url && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                  <Music className="h-4 w-4" />
+                  Generated Audio
+                </p>
+                <div className="bg-secondary/50 rounded-lg p-4">
+                  <audio controls className="w-full">
+                    <source src={job.outputs.audio_url} type="audio/wav" />
+                    <source src={job.outputs.audio_url} type="audio/mpeg" />
+                    Your browser does not support the audio element.
+                  </audio>
+                  <p className="text-xs text-muted-foreground mt-2 break-all">{job.outputs.audio_url}</p>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Actions */}
+      <div className="flex justify-center gap-4">
+        <Button variant="outline" asChild>
+          <Link to="/">
+            <Wand2 className="h-4 w-4 mr-2" />
+            Create New Job
+          </Link>
+        </Button>
+        <Button variant="outline" asChild>
+          <Link to="/history">
+            <Clock className="h-4 w-4 mr-2" />
+            View History
+          </Link>
+        </Button>
       </div>
     </div>
   )

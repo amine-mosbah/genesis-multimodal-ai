@@ -2,11 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies first (for better caching)
 COPY gateway/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code (maintain gateway package structure)
+# Copy only gateway code
 COPY gateway/ ./gateway/
 
 # Create data directory

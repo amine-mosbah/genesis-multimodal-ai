@@ -1,0 +1,148 @@
+version: "3.8"
+
+services:
+  # LLM Worker
+  llm-worker:
+    image: multimodal-llm-worker:latest
+    container_name: llm-worker
+    ports:
+      - "8001:8001"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - LLM_MODEL=${LLM_MODEL:-openai/gpt-3.5-turbo}
+    networks:
+      - multimodal-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Image Worker
+  image-worker:
+    image: multimodal-image-worker:latest
+    container_name: image-worker
+    ports:
+      - "8002:8002"
+    environment:
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
+      - IMAGE_MODEL_URL=${IMAGE_MODEL_URL:-https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0}
+      - STORAGE_PATH=/data/images
+    volumes:
+      - multimodal-storage:/data
+    networks:
+      - multimodal-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # STT Worker
+  stt-worker:
+    image: multimodal-stt-worker:latest
+    container_name: stt-worker
+    ports:
+      - "8003:8003"
+    environment:
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
+      - STT_MODEL_URL=${STT_MODEL_URL:-https://router.huggingface.co/hf-inference/models/openai/whisper-large-v3}
+    networks:
+      - multimodal-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # TTS Worker (ElevenLabs)
+  tts-worker:
+    image: multimodal-tts-worker:latest
+    container_name: tts-worker
+    ports:
+      - "8004:8004"
+    environment:
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - STORAGE_PATH=/data/audio
+    volumes:
+      - multimodal-storage:/data
+    networks:
+      - multimodal-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # CycleGAN Worker
+  cyclegan-worker:
+    image: multimodal-cyclegan-worker:latest
+    container_name: cyclegan-worker
+    ports:
+      - "8005:8005"
+    environment:
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
+      - CYCLEGAN_MODEL_URL=${CYCLEGAN_MODEL_URL:-https://router.huggingface.co/hf-inference/models/timbrooks/instruct-pix2pix}
+      - STORAGE_PATH=/data/images
+    volumes:
+      - multimodal-storage:/data
+    networks:
+      - multimodal-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Gateway Service
+  gateway:
+    image: multimodal-gateway:latest
+    container_name: gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_PATH=/data/jobs.db
+      - LLM_WORKER_URL=http://llm-worker:8001
+      - IMAGE_WORKER_URL=http://image-worker:8002
+      - STT_WORKER_URL=http://stt-worker:8003
+      - TTS_WORKER_URL=http://tts-worker:8004
+      - CYCLEGAN_WORKER_URL=http://cyclegan-worker:8005
+      - STORAGE_PATH=/data
+    volumes:
+      - multimodal-storage:/data
+    networks:
+      multimodal-network:
+        aliases:
+          - gateway-service
+    depends_on:
+      - llm-worker
+      - image-worker
+      - stt-worker
+      - tts-worker
+      - cyclegan-worker
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend Service
+  frontend:
+    image: multimodal-frontend:latest
+    container_name: frontend
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    networks:
+      - multimodal-network
+    depends_on:
+      - gateway
+
+networks:
+  multimodal-network:
+    driver: bridge
+
+volumes:
+  multimodal-storage:
+    driver: local

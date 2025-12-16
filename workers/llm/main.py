@@ -44,9 +44,9 @@ async def generate(request: GenerateRequest):
     if not OPENROUTER_API_KEY:
         raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY not configured")
     
-    model = request.options.get("model", DEFAULT_MODEL)
-    temperature = request.options.get("temperature", 0.7)
-    max_tokens = request.options.get("max_tokens", 500)
+    model = request.options.get("model") or DEFAULT_MODEL
+    temperature = request.options.get("temperature") or 0.7
+    max_tokens = request.options.get("max_tokens") or 500
     
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",

@@ -12,8 +12,15 @@ from typing import Optional, Dict, Any
 app = FastAPI(title="Image Worker")
 
 HF_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
-HF_API_URL = os.getenv("IMAGE_MODEL_URL", "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0")
+# Using the new router.huggingface.co endpoint (api-inference.huggingface.co is deprecated)
+HF_API_URL = os.getenv("IMAGE_MODEL_URL", "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0")
 STORAGE_PATH = os.getenv("STORAGE_PATH", "/data/images")
+
+# Fallback models if the primary one fails
+FALLBACK_MODELS = [
+    "https://router.huggingface.co/hf-inference/models/runwayml/stable-diffusion-v1-5",
+    "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-2-1",
+]
 
 
 class GenerateRequest(BaseModel):
@@ -81,43 +88,65 @@ async def generate(request: GenerateRequest):
         }
     }
     
-    try:
-        # Call HF Inference API
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(HF_API_URL, json=payload, headers=headers)
-            
-            if response.status_code == 503:
-                # Model is loading, wait and retry
-                import asyncio
-                await asyncio.sleep(10)
-                response = await client.post(HF_API_URL, json=payload, headers=headers)
-            
-            response.raise_for_status()
-            
-            # HF returns image bytes directly
-            image_bytes = response.content
-            if not image_bytes or len(image_bytes) < 100:
-                raise HTTPException(status_code=500, detail="Invalid image response from Hugging Face")
-            
-            # Save image locally
-            image_id = str(uuid.uuid4())
-            image_filename = f"{image_id}.png"
-            image_path = os.path.join(STORAGE_PATH, image_filename)
-            
-            Path(image_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(image_path, "wb") as f:
-                f.write(image_bytes)
-            
-            # Return URL (in K8s, this would be served via ingress/service)
-            image_url = f"/storage/images/{image_filename}"
-            
-            return GenerateResponse(image_url=image_url)
+    # Try primary model first, then fallbacks
+    models_to_try = [HF_API_URL] + FALLBACK_MODELS
+    last_error = None
     
-    except httpx.HTTPStatusError as e:
-        error_text = e.response.text if hasattr(e.response, 'text') else str(e)
-        raise HTTPException(status_code=e.response.status_code, detail=f"Hugging Face API error: {error_text}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
+    for model_url in models_to_try:
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(model_url, json=payload, headers=headers)
+                
+                # Handle model loading (503)
+                if response.status_code == 503:
+                    import asyncio
+                    estimated_time = 20
+                    try:
+                        data = response.json()
+                        estimated_time = data.get("estimated_time", 20)
+                    except:
+                        pass
+                    await asyncio.sleep(min(estimated_time, 30))
+                    response = await client.post(model_url, json=payload, headers=headers)
+                
+                # Handle unavailable model (410, 404) - try next
+                if response.status_code in [410, 404]:
+                    last_error = f"Model unavailable at {model_url}"
+                    continue
+                
+                response.raise_for_status()
+                
+                # HF returns image bytes directly
+                image_bytes = response.content
+                if not image_bytes or len(image_bytes) < 100:
+                    last_error = "Invalid image response"
+                    continue
+                
+                # Save image locally
+                image_id = str(uuid.uuid4())
+                image_filename = f"{image_id}.png"
+                image_path = os.path.join(STORAGE_PATH, image_filename)
+                
+                Path(image_path).parent.mkdir(parents=True, exist_ok=True)
+                with open(image_path, "wb") as f:
+                    f.write(image_bytes)
+                
+                # Return URL
+                image_url = f"/storage/images/{image_filename}"
+                return GenerateResponse(image_url=image_url)
+        
+        except httpx.HTTPStatusError as e:
+            last_error = f"API error: {e.response.status_code}"
+            if e.response.status_code not in [410, 404, 503]:
+                error_text = e.response.text if hasattr(e.response, 'text') else str(e)
+                raise HTTPException(status_code=e.response.status_code, detail=f"Hugging Face API error: {error_text}")
+            continue
+        except Exception as e:
+            last_error = str(e)
+            continue
+    
+    # All models failed
+    raise HTTPException(status_code=500, detail=f"Image generation failed with all models. Last error: {last_error}")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,8 @@ from typing import Optional, Dict, Any
 app = FastAPI(title="STT Worker")
 
 HF_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
-HF_API_URL = os.getenv("STT_MODEL_URL", "https://api-inference.huggingface.co/models/openai/whisper-large-v3")
+# Using the new router.huggingface.co endpoint (api-inference.huggingface.co is deprecated)
+HF_API_URL = os.getenv("STT_MODEL_URL", "https://router.huggingface.co/hf-inference/models/openai/whisper-large-v3")
 
 
 class GenerateRequest(BaseModel):

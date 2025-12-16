@@ -3,14 +3,19 @@ Gateway API - Main entry point for the multimodal AI platform.
 """
 import asyncio
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from typing import List
 
-from .schemas import Job, JobCreate, PipelineType, JobStatus
+from .schemas import Job, JobCreate, PipelineType, JobStatus, JobOptions
 from .db import JobDB
 from .services.pipeline_executor import PipelineExecutor
+
+# Storage path for generated files
+STORAGE_PATH = os.getenv("STORAGE_PATH", "/data")
 
 
 # Initialize database
@@ -140,6 +145,42 @@ def _get_pipeline_description(pipeline: PipelineType) -> str:
         PipelineType.IMAGE_TO_IMAGE: "Transform image style (CycleGAN)"
     }
     return descriptions.get(pipeline, "Unknown pipeline")
+
+
+# ============== File Serving Routes ==============
+
+@app.get("/storage/images/{filename}")
+async def serve_image(filename: str):
+    """Serve generated images."""
+    file_path = Path(STORAGE_PATH) / "images" / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(
+        file_path,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=3600"}
+    )
+
+
+@app.get("/storage/audio/{filename}")
+async def serve_audio(filename: str):
+    """Serve generated audio files."""
+    file_path = Path(STORAGE_PATH) / "audio" / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Audio not found")
+    
+    # Determine media type
+    media_type = "audio/wav"
+    if filename.endswith(".mp3"):
+        media_type = "audio/mpeg"
+    elif filename.endswith(".flac"):
+        media_type = "audio/flac"
+    
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=3600"}
+    )
 
 
 if __name__ == "__main__":

@@ -10,6 +10,13 @@ from pathlib import Path
 from .schemas import Job, JobStatus, PipelineType
 
 
+def datetime_serializer(obj):
+    """Custom JSON serializer for datetime objects."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+
 class JobDB:
     """Simple SQLite database for job storage."""
     
@@ -64,7 +71,7 @@ class JobDB:
             json.dumps(job.options.dict()),
             job.status.value if hasattr(job.status, 'value') else job.status,
             json.dumps(job.outputs.dict()),
-            json.dumps(job.metadata.dict()),
+            json.dumps(job.metadata.dict(), default=datetime_serializer),
             job.metadata.created_at.isoformat()
         ))
         
@@ -103,7 +110,7 @@ class JobDB:
             json.dumps(job.options.dict()),
             job.status.value if hasattr(job.status, 'value') else job.status,
             json.dumps(job.outputs.dict()),
-            json.dumps(job.metadata.dict()),
+            json.dumps(job.metadata.dict(), default=datetime_serializer),
             job.metadata.created_at.isoformat(),
             job.job_id
         ))
