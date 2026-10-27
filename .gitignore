@@ -70,3 +70,6 @@ secrets.yaml.local
 
 # Docker
 docker-compose.override.yml
+
+# Local tool binaries
+/kubectl
