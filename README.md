@@ -1,492 +1,125 @@
-# Multimodal Generative AI Platform
+# Genesis — Multimodal Generative AI Platform
 
-A production-grade, API-first, multi-capability generative AI platform deployed on Kubernetes (k0s). This system enables users to generate text, images, and audio through various pipelines, all orchestrated via a unified job-based architecture.
+A microservices platform that runs text, image and speech generation as asynchronous jobs: a FastAPI gateway orchestrates five worker services that call hosted AI APIs, behind a React + TypeScript frontend.
 
-## Table of Contents
+## What it does
 
-- [Overview](#overview)
-- [Features](#features)
-- [Supported Pipelines](#supported-pipelines)
-- [Architecture](#architecture)
-- [Technology Stack](#technology-stack)
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Development](#development)
-- [Deployment](#deployment)
-- [API Documentation](#api-documentation)
-- [Limitations & Future Improvements](#limitations--future-improvements)
-- [Contributing](#contributing)
-- [License](#license)
+You pick a pipeline in the web UI (or call the REST API). The gateway stores the job, runs it in the background, and the UI polls until it shows the result.
 
-## Overview
+| Pipeline | Flow | Provider / model (defaults in code) |
+|---|---|---|
+| `text_to_text` | LLM worker | OpenRouter, `openai/gpt-3.5-turbo` |
+| `text_to_image` | (optional LLM prompt rewrite for a chosen style) → image worker | Hugging Face Inference, SDXL base 1.0, falling back to SD 1.5 / SD 2.1 |
+| `text_to_speech` | TTS worker | ElevenLabs, `eleven_turbo_v2_5` |
+| `speech_to_text` | STT worker | Hugging Face Inference, Whisper large-v3 |
+| `speech_to_image` | STT → LLM prompt cleanup → image worker | chains the three above |
+| `image_to_image` | img2img worker | ModelsLab img2img API, `flux-kontext-dev` |
 
-This platform provides a unified interface for multiple generative AI capabilities, including text generation, image generation, speech-to-text transcription, text-to-speech synthesis, and image transformation. The system is designed with a microservices architecture, where each capability is implemented as an independent worker service, orchestrated by a central Gateway API.
+All inference runs through external APIs, so no GPU is needed. Generated images and audio are written to a shared volume and served by the gateway under `/storage/...`.
 
-### Design Philosophy
+The UI has three pages: create a job, follow a job (polls every 2 s, shows text/image/audio output), and view job history.
 
-- **API-First**: All communication is via REST APIs
-- **Provider-Agnostic**: Easy to swap AI providers (OpenRouter, Hugging Face, etc.)
-- **Asynchronous Jobs**: All generation tasks are handled asynchronously via job queues
-- **Stateless Workers**: Each worker is stateless and can be scaled independently
-- **Kubernetes-Native**: Built for container orchestration from the ground up
-- **No Local ML Inference**: All inference is done via external APIs (reduces resource requirements)
+## Tech stack
 
-## Features
-
-- ✅ **Multiple Pipeline Types**: Support for 6+ different generation pipelines
-- ✅ **Job-Based Architecture**: Asynchronous job processing with status tracking
-- ✅ **Web Frontend**: Modern React-based UI with real-time status updates
-- ✅ **Microservices**: Modular, independently scalable worker services
-- ✅ **Kubernetes Deployment**: Full k0s manifests for easy deployment
-- ✅ **Persistent Storage**: Job history and generated artifacts stored persistently
-- ✅ **Error Handling**: Comprehensive error handling and retry logic
-- ✅ **API Documentation**: Auto-generated OpenAPI/Swagger documentation
-
-## Supported Pipelines
-
-### 1. Text-to-Text (`text_to_text`)
-Generate or transform text using large language models.
-
-**Input**: Text prompt
-**Output**: Generated text
-**Worker**: LLM Worker (OpenRouter)
-
-### 2. Text-to-Image (`text_to_image`)
-Generate images from text descriptions.
-
-**Input**: Text prompt
-**Output**: Generated image (PNG)
-**Workers**: LLM Worker (optional prompt enhancement), Image Worker (Stable Diffusion XL)
-
-### 3. Text-to-Speech (`text_to_speech`)
-Convert text to natural-sounding speech.
-
-**Input**: Text
-**Output**: Audio file (WAV)
-**Worker**: TTS Worker (Hugging Face TTS)
-
-### 4. Speech-to-Text (`speech_to_text`)
-Transcribe speech audio to text.
-
-**Input**: Audio file URL
-**Output**: Transcribed text
-**Worker**: STT Worker (Whisper Large v3)
-
-### 5. Speech-to-Image (`speech_to_image`)
-Generate images from speech input (multi-step pipeline).
-
-**Flow**: Speech → Transcription → Prompt Enhancement → Image Generation
-**Input**: Audio file URL
-**Output**: Transcribed text + Generated image
-**Workers**: STT Worker → LLM Worker → Image Worker
-
-### 6. Image-to-Image (`image_to_image`)
-Transform image style (CycleGAN-style).
-
-**Input**: Image URL
-**Output**: Transformed image
-**Worker**: CycleGAN Worker (Hugging Face)
+- **Backend:** Python 3.11, FastAPI, Pydantic, httpx (async), SQLite for job state
+- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Radix UI primitives, React Router; served by nginx
+- **Infrastructure:** Docker images per service, Docker Compose. Kubernetes (k0s) manifests in `k8s/`.
+- **External APIs:** OpenRouter, Hugging Face Inference, ElevenLabs, ModelsLab
 
 ## Architecture
 
-The system follows a microservices architecture with clear separation of concerns:
-
-```
-┌─────────────┐
-│  Frontend   │ (React + TypeScript)
-└──────┬──────┘
-       │ HTTP
-       ▼
-┌─────────────┐
-│   Gateway   │ (FastAPI - Orchestration Layer)
-└──────┬──────┘
-       │
-   ┌───┴───┬──────────┬──────────┬──────────┐
-   ▼       ▼          ▼          ▼          ▼
-┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────────┐
-│ LLM  │ │Image │ │ STT  │ │ TTS  │ │ CycleGAN │
-│Worker│ │Worker│ │Worker│ │Worker│ │  Worker  │
-└───┬──┘ └───┬──┘ └───┬──┘ └───┬──┘ └────┬─────┘
-    │        │        │        │         │
-    ▼        ▼        ▼        ▼         ▼
-External APIs (OpenRouter, Hugging Face)
+```mermaid
+flowchart LR
+    UI[React frontend<br/>nginx :3000] -->|REST + polling| GW[Gateway<br/>FastAPI :8000]
+    GW <--> DB[(SQLite<br/>jobs.db)]
+    GW -->|POST /generate| LLM[LLM worker :8001]
+    GW --> IMG[Image worker :8002]
+    GW --> STT[STT worker :8003]
+    GW --> TTS[TTS worker :8004]
+    GW --> I2I[img2img worker :8005]
+    LLM --> OR[(OpenRouter)]
+    IMG --> HF[(Hugging Face)]
+    STT --> HF
+    TTS --> EL[(ElevenLabs)]
+    I2I --> ML[(ModelsLab)]
+    IMG & TTS & I2I --> VOL["shared volume (/data)"]
+    GW -->|serves /storage| VOL
 ```
 
-### Components
+**Job lifecycle:** `POST /jobs` validates the inputs for the pipeline, saves the job as `queued` in SQLite, and returns the job ID straight away. A FastAPI background task then runs `PipelineExecutor`, which calls the workers over HTTP in sequence (for multi-step pipelines like speech → image). It stores the outputs (or the error message) and marks the job `completed` or `failed`. Clients poll `GET /jobs/{id}`.
 
-- **Frontend Service**: React SPA with job creation, status polling, and results visualization
-- **Gateway Service**: Central orchestration layer managing jobs, pipelines, and worker coordination
-- **Worker Services**: Stateless microservices for each AI capability
-- **Storage**: SQLite database for job metadata, persistent volume for generated files
+Each worker is a small stateless FastAPI service with `GET /health` and `POST /generate`. To change providers, you change only the matching worker.
 
-For detailed architecture documentation, see [`architecture/system_diagram.md`](architecture/system_diagram.md).
+More detail: [`architecture/pipelines.md`](architecture/pipelines.md) and [`architecture/system_diagram.md`](architecture/system_diagram.md).
 
-## Technology Stack
+## Getting started (Docker Compose)
 
-### Backend
-- **Gateway**: FastAPI (Python 3.11)
-- **Workers**: FastAPI (Python 3.11)
-- **Database**: SQLite (default) / PostgreSQL (optional)
-- **API Clients**: httpx (async HTTP)
-
-### Frontend
-- **Framework**: React 18
-- **Build Tool**: Vite
-- **Language**: TypeScript
-- **Styling**: Tailwind CSS
-- **Routing**: React Router
-
-### Infrastructure
-- **Orchestration**: Kubernetes (k0s)
-- **Containerization**: Docker
-- **Storage**: Kubernetes PersistentVolume
-
-### External APIs
-- **LLM**: OpenRouter (GPT models)
-- **Image Generation**: Hugging Face Inference API (Stable Diffusion XL)
-- **Speech-to-Text**: Hugging Face Inference API (Whisper Large v3)
-- **Text-to-Speech**: Hugging Face Inference API (TTS models)
-- **Image Transformation**: Hugging Face Inference API
-
-## Prerequisites
-
-### For Local Development
-- Python 3.11+
-- Node.js 18+
-- Docker & Docker Compose (optional)
-
-### For Kubernetes Deployment
-- k0s installed and running
-- kubectl configured
-- Minimum 8GB RAM available
-- Docker or container runtime
-
-### API Keys
-- **OpenRouter API Key**: Sign up at [openrouter.ai](https://openrouter.ai)
-- **Hugging Face API Key**: Get token from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-
-## Quick Start
-
-### 1. Clone the Repository
+Prerequisites: Docker with Compose, plus API keys for the providers you want to use.
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/amine-mosbah/genesis-multimodal-ai.git
 cd genesis-multimodal-ai
+
+# 1. Build all seven images (gateway, frontend, 5 workers)
+./build-images.sh
+
+# 2. Provide API keys (Compose reads .env automatically; .env is git-ignored)
+cat > .env <<'EOF'
+OPENROUTER_API_KEY=...
+HUGGINGFACE_API_KEY=...
+ELEVENLABS_API_KEY=...
+MODELSLAB_API_KEY=...
+EOF
+
+# 3. Start everything
+docker compose up
 ```
 
-### 2. Build Docker Images
+- Frontend: http://localhost:3000
+- Gateway API docs (Swagger): http://localhost:8000/docs
+
+Example request:
 
 ```bash
-# Build all images
-docker build -t multimodal-gateway:latest -f gateway/Dockerfile gateway/
-docker build -t multimodal-frontend:latest -f frontend/Dockerfile frontend/
-docker build -t multimodal-llm-worker:latest -f workers/llm/Dockerfile workers/llm/
-docker build -t multimodal-image-worker:latest -f workers/image/Dockerfile workers/image/
-docker build -t multimodal-stt-worker:latest -f workers/stt/Dockerfile workers/stt/
-docker build -t multimodal-tts-worker:latest -f workers/tts/Dockerfile workers/tts/
-docker build -t multimodal-cyclegan-worker:latest -f workers/cyclegan/Dockerfile workers/cyclegan/
+curl -X POST http://localhost:8000/jobs -H 'Content-Type: application/json' \
+  -d '{"pipeline": "text_to_image", "inputs": {"text": "a lighthouse at dusk"}, "options": {"style": "cinematic"}}'
+curl http://localhost:8000/jobs/<job_id>
 ```
 
-### 3. Create Kubernetes Secrets
+### Kubernetes (k0s)
 
-```bash
-kubectl create namespace multimodal-ai
+`k8s/` has a namespace, ConfigMap, Secret template, PV/PVC (hostPath), Deployments and Services for every component, plus an optional Ingress. You can apply them with `make deploy`, and `make status` / `make logs` help you inspect the cluster. These manifests have not been updated for the ElevenLabs and ModelsLab workers, which still receive only a Hugging Face key. Treat this path as work in progress. See [`DEPLOYMENT.md`](DEPLOYMENT.md) and [`architecture/k8s_design.md`](architecture/k8s_design.md).
 
-kubectl create secret generic api-keys \
-  --from-literal=openrouter-api-key=YOUR_OPENROUTER_KEY \
-  --from-literal=huggingface-api-key=YOUR_HF_KEY \
-  -n multimodal-ai
+## API
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/jobs` | Create a job (`pipeline`, `inputs.text` / `audio_url` / `image_url`, `options`) |
+| `GET` | `/jobs/{job_id}` | Job status and outputs |
+| `GET` | `/jobs?limit=&offset=` | Job history |
+| `GET` | `/pipelines` | Supported pipelines |
+| `GET` | `/storage/images/{file}`, `/storage/audio/{file}` | Generated files |
+
+## Project structure
+
+```
+gateway/            FastAPI gateway: main.py (routes), db.py (SQLite), schemas.py,
+                    services/pipeline_executor.py (multi-step orchestration)
+workers/            One FastAPI service per capability: llm, image, stt, tts, cyclegan (img2img)
+frontend/           React + Vite + Tailwind SPA (CreateJob, JobDetail, JobHistory pages)
+k8s/                Kubernetes manifests (namespace, config, storage, deployments, ingress)
+architecture/       Design notes: pipelines, system diagram, k8s design
+docker-compose.yml  Local multi-container setup
+build-images.sh     Builds all Docker images
 ```
 
-### 4. Deploy to Kubernetes
+## Current limitations
 
-```bash
-# Apply manifests in order
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/configmap.yaml
-kubectl apply -f k8s/secrets.yaml  # Update with your keys first!
-kubectl apply -f k8s/persistent-volume.yaml
-kubectl apply -f k8s/gateway.yaml
-kubectl apply -f k8s/workers/llm-worker.yaml
-kubectl apply -f k8s/workers/image-worker.yaml
-kubectl apply -f k8s/workers/stt-worker.yaml
-kubectl apply -f k8s/workers/tts-worker.yaml
-kubectl apply -f k8s/workers/cyclegan-worker.yaml
-kubectl apply -f k8s/frontend.yaml
-```
+- Speech and image inputs must be **public URLs**. The upload endpoint isn't implemented yet.
+- Jobs run as in-process background tasks, not on a message queue. A job is marked `running` only in memory, so the stored status goes from `queued` straight to `completed` or `failed`.
+- No authentication, rate limiting or automated tests yet. CORS is open.
+- SQLite is the only database implemented.
 
-### 5. Access the Application
+## Author
 
-```bash
-# Get NodePort for frontend
-kubectl get svc frontend-service -n multimodal-ai
-
-# Access via http://<node-ip>:<nodeport>
-# Or use port forwarding:
-kubectl port-forward service/frontend-service 3000:80 -n multimodal-ai
-# Then open http://localhost:3000
-```
-
-### 6. Verify Deployment
-
-```bash
-# Check all pods are running
-kubectl get pods -n multimodal-ai
-
-# View gateway logs
-kubectl logs -f deployment/gateway-deployment -n multimodal-ai
-```
-
-## Configuration
-
-### Environment Variables
-
-#### Gateway
-- `DB_PATH`: Path to SQLite database (default: `/data/jobs.db`)
-- `LLM_WORKER_URL`: LLM worker service URL
-- `IMAGE_WORKER_URL`: Image worker service URL
-- `STT_WORKER_URL`: STT worker service URL
-- `TTS_WORKER_URL`: TTS worker service URL
-- `CYCLEGAN_WORKER_URL`: CycleGAN worker service URL
-
-#### Workers
-- `OPENROUTER_API_KEY`: OpenRouter API key (LLM worker)
-- `HUGGINGFACE_API_KEY`: Hugging Face API key (Image, STT, TTS, CycleGAN workers)
-- `LLM_MODEL`: LLM model identifier (default: `openai/gpt-3.5-turbo`)
-- `IMAGE_MODEL_URL`: Hugging Face image model endpoint
-- `STORAGE_PATH`: Path for storing generated files
-
-### ConfigMap
-
-Configuration is managed via Kubernetes ConfigMap (`k8s/configmap.yaml`). Update values as needed.
-
-### Secrets
-
-API keys are stored in Kubernetes Secrets. Never commit secrets to version control!
-
-## Development
-
-### Local Development Setup
-
-#### Backend Services
-
-```bash
-# Gateway
-cd gateway
-python -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
-pip install -r requirements.txt
-export OPENROUTER_API_KEY=your_key
-export HUGGINGFACE_API_KEY=your_key
-uvicorn gateway.main:app --reload --port 8000
-
-# Workers (in separate terminals)
-cd workers/llm
-pip install -r requirements.txt
-export OPENROUTER_API_KEY=your_key
-uvicorn main:app --reload --port 8001
-```
-
-#### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-# Frontend runs on http://localhost:3000
-```
-
-### Running Tests
-
-```bash
-# TODO: Add pytest tests
-pytest gateway/tests/
-pytest workers/*/tests/
-```
-
-### Code Quality
-
-```bash
-# Linting
-ruff check gateway/ workers/
-
-# Type checking
-mypy gateway/ workers/
-
-# Frontend linting
-cd frontend
-npm run lint
-```
-
-## Deployment
-
-### Production Considerations
-
-1. **Database**: Migrate from SQLite to PostgreSQL for production
-2. **Storage**: Use object storage (S3, MinIO) instead of hostPath
-3. **Secrets Management**: Use external secret management (Vault, Sealed Secrets)
-4. **Monitoring**: Add Prometheus metrics and Grafana dashboards
-5. **Logging**: Centralized logging with ELK stack or Loki
-6. **Scaling**: Configure horizontal pod autoscaling
-7. **Ingress**: Set up proper ingress controller with TLS
-8. **Resource Limits**: Tune resource requests/limits based on usage
-
-### High Availability
-
-For production, consider:
-- Multiple replicas for each service
-- Database replication
-- Load balancer in front of services
-- Health checks and auto-restart
-- Backup strategy for persistent data
-
-## API Documentation
-
-### Gateway API Endpoints
-
-#### Create Job
-```http
-POST /jobs
-Content-Type: application/json
-
-{
-  "pipeline": "text_to_image",
-  "inputs": {
-    "text": "A beautiful sunset over mountains"
-  },
-  "options": {
-    "style": "cinematic",
-    "quality": "high"
-  }
-}
-```
-
-Response:
-```json
-{
-  "job_id": "uuid",
-  "pipeline": "text_to_image",
-  "status": "queued",
-  ...
-}
-```
-
-#### Get Job Status
-```http
-GET /jobs/{job_id}
-```
-
-Response:
-```json
-{
-  "job_id": "uuid",
-  "status": "completed",
-  "outputs": {
-    "image_url": "/storage/images/xxx.png"
-  },
-  ...
-}
-```
-
-#### List Jobs
-```http
-GET /jobs?limit=100&offset=0
-```
-
-#### List Pipelines
-```http
-GET /pipelines
-```
-
-### Interactive API Documentation
-
-Once the Gateway is running, visit:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
-### Worker API
-
-Each worker exposes:
-- `GET /health`: Health check
-- `POST /generate`: Generate request
-
-See worker-specific documentation in each worker's `main.py`.
-
-## Limitations & Future Improvements
-
-### Current Limitations
-
-1. **File Upload**: Currently requires direct URLs for audio/image inputs. File upload endpoint TODO.
-2. **Model Loading**: Hugging Face models may need warm-up time (first request slower).
-3. **Storage URLs**: Generated file URLs are relative paths. Need file serving service.
-4. **Error Recovery**: Limited retry logic for external API failures.
-5. **Job Queue**: No dedicated message queue (using background tasks).
-6. **Rate Limiting**: No rate limiting on API endpoints.
-7. **Authentication**: No authentication/authorization implemented.
-
-### Future Improvements
-
-- [ ] **File Upload Service**: Direct file upload with presigned URLs
-- [ ] **Message Queue**: Add RabbitMQ/Redis for job queuing
-- [ ] **File Serving**: Nginx or object storage integration for file serving
-- [ ] **Rate Limiting**: Implement rate limiting per user/IP
-- [ ] **Authentication**: Add JWT-based authentication
-- [ ] **Multi-tenancy**: Support for multiple users/organizations
-- [ ] **WebSocket Updates**: Real-time job status via WebSockets
-- [ ] **Batch Processing**: Support for batch job creation
-- [ ] **Model Caching**: Cache frequently used models
-- [ ] **Cost Tracking**: Track API usage costs per job
-- [ ] **Advanced Pipelines**: More complex multi-step pipelines
-- [ ] **Pipeline Templates**: Pre-configured pipeline templates
-- [ ] **Metrics & Monitoring**: Prometheus + Grafana integration
-- [ ] **CI/CD**: Automated testing and deployment pipelines
-
-## Why API-Based Inference?
-
-This project explicitly uses **API-based inference only** (no local ML models) for several reasons:
-
-1. **Resource Efficiency**: No need for expensive GPUs or large model storage
-2. **Flexibility**: Easy to swap providers or models without code changes
-3. **Scalability**: Can leverage cloud-based inference at scale
-4. **Cost-Effective**: Pay-per-use rather than maintaining infrastructure
-5. **Academic Focus**: Allows focus on system architecture rather than ML optimization
-6. **Deployment Simplicity**: Works on any Kubernetes cluster, even low-resource ones
-
-This approach is suitable for:
-- Academic projects
-- Prototyping and MVP development
-- Cost-sensitive deployments
-- Multi-provider architectures
-
-For production systems requiring local inference, the architecture can be extended with local model serving workers.
-
-## Contributing
-
-This is an academic project. Contributions welcome via pull requests!
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## License
-
-This project is provided as-is for academic purposes.
-
-## Acknowledgments
-
-- **OpenRouter** for LLM API access
-- **Hugging Face** for model hosting and inference APIs
-- **FastAPI** for the excellent Python web framework
-- **React** and **Vite** for modern frontend development
-- **k0s** for lightweight Kubernetes distribution
-
-## Contact
-
-For questions or issues, please open an issue on the repository.
-
----
-
-**Note**: This is a production-grade academic project demonstrating modern microservices architecture, Kubernetes deployment, and multi-modal AI integration. It is designed to be demo-ready and showcase best practices in distributed systems design.
+Mohamed Amine Ben Mosbah, software engineering student at ENISo (Tunisia) · [github.com/amine-mosbah](https://github.com/amine-mosbah)
